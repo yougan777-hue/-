@@ -9,10 +9,12 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.render.RenderLayer;
 import net.minecraft.client.render.VertexConsumer;
+import net.minecraft.client.render.WorldRenderer;
 import net.minecraft.client.util.InputUtil;
 import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.text.Text;
+import net.minecraft.util.math.Box;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
 import org.joml.Matrix4f;
@@ -24,19 +26,29 @@ public class HaloClient implements ClientModInitializer {
     private static final float OUTER = 0.36f;
     private static final double MAX_DIST_SQ = 128.0 * 128.0;
 
-    private static boolean enabled = true;
-    private static KeyBinding toggleKey;
+    private static boolean haloOn = true;
+    private static boolean outlineOn = true;
+    private static KeyBinding haloKey;
+    private static KeyBinding outlineKey;
 
     @Override
     public void onInitializeClient() {
-        toggleKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
+        haloKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
                 "key.halomod.toggle", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_H, "category.halomod"));
+        outlineKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
+                "key.halomod.outline", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_J, "category.halomod"));
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
-            while (toggleKey.wasPressed()) {
-                enabled = !enabled;
+            while (haloKey.wasPressed()) {
+                haloOn = !haloOn;
                 if (client.player != null) {
-                    client.player.sendMessage(Text.literal("Halo: " + (enabled ? "ON" : "OFF")), true);
+                    client.player.sendMessage(Text.literal("Halo: " + (haloOn ? "ON" : "OFF")), true);
+                }
+            }
+            while (outlineKey.wasPressed()) {
+                outlineOn = !outlineOn;
+                if (client.player != null) {
+                    client.player.sendMessage(Text.literal("Outline: " + (outlineOn ? "ON" : "OFF")), true);
                 }
             }
         });
@@ -44,31 +56,50 @@ public class HaloClient implements ClientModInitializer {
         WorldRenderEvents.AFTER_ENTITIES.register(HaloClient::render);
     }
 
+    private static boolean shouldDraw(PlayerEntity p, MinecraftClient mc, Vec3d cam) {
+        if (p == mc.player && mc.options.getPerspective().isFirstPerson()) return false;
+        if (p.isSpectator() || !p.isAlive()) return false;
+        return p.squaredDistanceTo(cam) <= MAX_DIST_SQ;
+    }
+
     private static void render(WorldRenderContext ctx) {
-        if (!enabled) return;
+        if (!haloOn && !outlineOn) return;
         MinecraftClient mc = MinecraftClient.getInstance();
         if (mc.world == null || mc.player == null || ctx.consumers() == null) return;
 
         Vec3d cam = ctx.camera().getPos();
         float td = ctx.tickDelta();
         MatrixStack ms = ctx.matrixStack();
-        VertexConsumer vc = ctx.consumers().getBuffer(RenderLayer.getLightning());
 
-        for (PlayerEntity p : mc.world.getPlayers()) {
-            if (p == mc.player && mc.options.getPerspective().isFirstPerson()) continue;
-            if (p.isSpectator() || !p.isAlive()) continue;
-            if (p.squaredDistanceTo(cam) > MAX_DIST_SQ) continue;
+        if (haloOn) {
+            VertexConsumer vc = ctx.consumers().getBuffer(RenderLayer.getLightning());
+            for (PlayerEntity p : mc.world.getPlayers()) {
+                if (!shouldDraw(p, mc, cam)) continue;
 
-            double x = MathHelper.lerp(td, p.prevX, p.getX());
-            double y = MathHelper.lerp(td, p.prevY, p.getY());
-            double z = MathHelper.lerp(td, p.prevZ, p.getZ());
-            double bob = Math.sin((p.age + td) * 0.1) * 0.03;
+                double x = MathHelper.lerp(td, p.prevX, p.getX());
+                double y = MathHelper.lerp(td, p.prevY, p.getY());
+                double z = MathHelper.lerp(td, p.prevZ, p.getZ());
+                double bob = Math.sin((p.age + td) * 0.1) * 0.03;
 
-            ms.push();
-            ms.translate(x - cam.x, y + p.getHeight() + 0.3 + bob - cam.y, z - cam.z);
-            Matrix4f m = ms.peek().getPositionMatrix();
-            ring(vc, m, INNER, OUTER, 255, 215, 0, 230);
-            ms.pop();
+                ms.push();
+                ms.translate(x - cam.x, y + p.getHeight() + 0.3 + bob - cam.y, z - cam.z);
+                Matrix4f m = ms.peek().getPositionMatrix();
+                ring(vc, m, INNER, OUTER, 255, 215, 0, 230);
+                ms.pop();
+            }
+        }
+
+        if (outlineOn) {
+            VertexConsumer lines = ctx.consumers().getBuffer(RenderLayer.getLines());
+            for (PlayerEntity p : mc.world.getPlayers()) {
+                if (!shouldDraw(p, mc, cam)) continue;
+
+                double dx = MathHelper.lerp(td, p.prevX, p.getX()) - p.getX();
+                double dy = MathHelper.lerp(td, p.prevY, p.getY()) - p.getY();
+                double dz = MathHelper.lerp(td, p.prevZ, p.getZ()) - p.getZ();
+                Box box = p.getBoundingBox().offset(dx - cam.x, dy - cam.y, dz - cam.z);
+                WorldRenderer.drawBox(ms, lines, box, 1.0f, 0.84f, 0.0f, 1.0f);
+            }
         }
     }
 
@@ -80,7 +111,6 @@ public class HaloClient implements ClientModInitializer {
             float c0 = (float) Math.cos(a0), s0 = (float) Math.sin(a0);
             float c1 = (float) Math.cos(a1), s1 = (float) Math.sin(a1);
 
-            // inner0, outer0, outer1, inner1 (and reversed, so it is visible from below and above)
             float[][] q = {
                     {c0 * inner, s0 * inner}, {c0 * outer, s0 * outer},
                     {c1 * outer, s1 * outer}, {c1 * inner, s1 * inner}
