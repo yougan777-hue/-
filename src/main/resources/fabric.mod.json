@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "halomod",
+  "version": "${version}",
+  "name": "Halo Mod",
+  "description": "Draws a golden halo above every player, including invisible ones. Client-side only.",
+  "authors": ["Rostyslav"],
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "client": ["com.halomod.HaloClient"]
+  },
+  "depends": {
+    "fabricloader": ">=0.14.0",
+    "minecraft": "1.20.1",
+    "java": ">=17",
+    "fabric-api": "*"
+  }
+}
